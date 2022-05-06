@@ -21,9 +21,15 @@ type Master struct {
 
 //
 // Process worker rpc request that get task or task completed notice etc.
-func (m *Master) ApplyTask(req *RpcReq, rep *RpcRep) error{
-	fmt.Printf("worker apply task,req %v ", req.ReqType)
-	rep.RepType = 1
+func (m *Master) ApplyTask(req *RpcReq, rep *RpcRep) error {
+	fmt.Printf("worker apply task. req %v \n", req.ReqType)
+
+	//version1
+	if(m.filesIdx < len(m.files)){
+		rep.RepType = 1
+		rep.FilePath = m.files[m.filesIdx]
+		m.filesIdx++
+	}
 	return nil
 }
 
@@ -72,6 +78,7 @@ func (m *Master) Done() bool {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{files: files, filesIdx: 0, nReduce: nReduce, nCompletedReduce: 0}
+	fmt.Printf("create Master. file size = %v. nReduce = %v \n", len(files), nReduce)
 
 	// Your code here.
 

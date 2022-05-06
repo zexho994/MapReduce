@@ -5,7 +5,6 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
-
 //
 // Map functions return a slice of KeyValue.
 //
@@ -24,21 +23,39 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-
-	// Your worker implementation here.
-	req := RpcReq{ReqType: 2}
+	req := RpcReq{ReqType: 1}
 	rep := RpcRep{}
 
-	call("Master.ApplyTask",&req,&rep)
-	fmt.Printf("rep.repType %v \n",rep.RepType)
+	for {
+		call("Master.ApplyTask", &req, &rep)
+		fmt.Printf("rep.repType %v \n", rep.RepType)
 
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
+		// no task and return
+		if rep.RepType == 0 {
+			return
+		}
+
+		if rep.RepType == 1 {
+			workerMap(rep.FilePath)
+		} else {
+			workerReduce()
+		}
+
+	}
+}
+
+func workerMap(filepath string) {
+	fmt.Printf("Map : filepath %v \n", filepath)
+
+}
+
+func workerReduce() {
+	fmt.Printf("Reduce \n")
+
 }
 
 //

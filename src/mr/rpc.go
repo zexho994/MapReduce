@@ -23,11 +23,20 @@ type ExampleReply struct {
 }
 
 type RpcReq struct {
+	// 1 apply a task
+	// 2 map task completed
+	// 3 reduce task completed
 	ReqType int8
 }
 
 type RpcRep struct {
+	// 0 no task
+	// 1 map task
+	// 2 reduce task
 	RepType int8
+
+	// when ReqType != map task, the FilePath will be nil
+	FilePath string
 }
 
 // Add your RPC definitions here.
