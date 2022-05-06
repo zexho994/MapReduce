@@ -28,14 +28,17 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	req := RpcReq{ReqType: 2}
+	rep := RpcRep{}
+
+	call("Master.ApplyTask",&req,&rep)
+	fmt.Printf("rep.repType %v \n",rep.RepType)
 
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
-
 }
 
 //

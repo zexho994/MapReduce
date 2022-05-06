@@ -22,6 +22,14 @@ type ExampleReply struct {
 	Y int
 }
 
+type RpcReq struct {
+	ReqType int8
+}
+
+type RpcRep struct {
+	RepType int8
+}
+
 // Add your RPC definitions here.
 
 
