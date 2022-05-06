@@ -1,9 +1,16 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+	"strconv"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -11,6 +18,17 @@ import "hash/fnv"
 type KeyValue struct {
 	Key   string
 	Value string
+}
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
+type worker struct {
+	workerId string
 }
 
 //
@@ -27,12 +45,13 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	req := RpcReq{ReqType: 1}
-	rep := RpcRep{}
+	worker := worker{workerId:  strconv.Itoa(os.Getpid())}
 
 	for {
+		req := RpcReq{ReqType: 1}
+		rep := RpcRep{}
 		call("Master.ApplyTask", &req, &rep)
-		fmt.Printf("rep.repType %v \n", rep.RepType)
+		log.Println("rpc response.repType = ", rep.RepType)
 
 		// no task and return
 		if rep.RepType == 0 {
@@ -40,20 +59,64 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		}
 
 		if rep.RepType == 1 {
-			workerMap(rep.FilePath)
+			worker.processMapTask(rep.FilePath, mapf, reducef)
 		} else {
-			workerReduce()
+			processReduceTask()
 		}
-
 	}
-}
-
-func workerMap(filepath string) {
-	fmt.Printf("Map : filepath %v \n", filepath)
 
 }
 
-func workerReduce() {
+// step1 : read file by filepath
+// step2 : split file content and save to kv[]
+// step3 : create intermediate file and store to "workerId/filepath"
+// step4 :
+// step5 : append kv[] to intermediate file
+func (w *worker) processMapTask(filepath string, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	log.Println("==> start Map() ...  filepath")
+	log.Println("fileName = ", filepath)
+
+	// step1
+	file, err := os.Open(filepath)
+	if err != nil {
+		log.Fatalf("cannot open %v", filepath)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filepath)
+	}
+	file.Close()
+
+	// step2
+	kvs := []KeyValue{}
+	kva := mapf(filepath, string(content))
+	kvs = append(kvs, kva...)
+	sort.Sort(ByKey(kvs))
+
+	// step3
+	if _, err := os.Stat(w.workerId); errors.Is(err, os.ErrNotExist) {
+		log.Println("mkdir ", w.workerId)
+		err := os.Mkdir(w.workerId, os.ModePerm)
+		if err != nil {
+			log.Println("mkdir err", err)
+			return
+		}
+	}
+	intermediateFileName := w.workerId + "/" + filepath
+	intermediateFile, _ := os.Create(intermediateFileName)
+
+	// step4
+	data := ""
+	for _, entry := range kvs {
+		data = data + entry.Key + " " + entry.Value + "\n"
+	}
+
+	// step5
+	ioutil.WriteFile(intermediateFileName, []byte(data), 1024)
+	intermediateFile.Close()
+}
+
+func processReduceTask() {
 	fmt.Printf("Reduce \n")
 
 }
@@ -63,23 +126,23 @@ func workerReduce() {
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func CallExample() {
+// func CallExample() {
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+// 	// declare an argument structure.
+// 	args := ExampleArgs{}
 
-	// fill in the argument(s).
-	args.X = 99
+// 	// fill in the argument(s).
+// 	args.X = 99
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+// 	// declare a reply structure.
+// 	reply := ExampleReply{}
 
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
+// 	// send the RPC request, wait for the reply.
+// 	call("Master.Example", &args, &reply)
 
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
-}
+// 	// reply.Y should be 100.
+// 	fmt.Printf("reply.Y %v\n", reply.Y)
+// }
 
 //
 // send an RPC request to the master, wait for the response.
