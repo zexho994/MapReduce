@@ -28,7 +28,7 @@ func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 type worker struct {
-	workerId string
+	workerPid string
 }
 
 //
@@ -45,7 +45,7 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	worker := worker{workerId:  strconv.Itoa(os.Getpid())}
+	worker := worker{workerPid: strconv.Itoa(os.Getpid())}
 
 	for {
 		req := RpcReq{ReqType: 1}
@@ -67,10 +67,11 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 
 }
 
+// process map task
 // step1 : read file by filepath
-// step2 : split file content and save to kv[]
+// step2 : split the file content and save to kv[]
 // step3 : create intermediate file and store to "workerId/filepath"
-// step4 :
+// step4 : count the number of occurrences of words
 // step5 : append kv[] to intermediate file
 func (w *worker) processMapTask(filepath string, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	log.Println("==> start Map() ...  filepath")
@@ -94,31 +95,41 @@ func (w *worker) processMapTask(filepath string, mapf func(string, string) []Key
 	sort.Sort(ByKey(kvs))
 
 	// step3
-	if _, err := os.Stat(w.workerId); errors.Is(err, os.ErrNotExist) {
-		log.Println("mkdir ", w.workerId)
-		err := os.Mkdir(w.workerId, os.ModePerm)
+	if _, err := os.Stat(w.workerPid); errors.Is(err, os.ErrNotExist) {
+		log.Println("mkdir ", w.workerPid)
+		err := os.Mkdir(w.workerPid, os.ModePerm)
 		if err != nil {
 			log.Println("mkdir err", err)
 			return
 		}
 	}
-	intermediateFileName := w.workerId + "/" + filepath
+	intermediateFileName := w.workerPid + "/" + filepath
 	intermediateFile, _ := os.Create(intermediateFileName)
+	defer intermediateFile.Close()
 
 	// step4
 	data := ""
-	for _, entry := range kvs {
-		data = data + entry.Key + " " + entry.Value + "\n"
+	for idx := 0; idx < len(kvs); {
+		right := idx + 1
+		k := kvs[idx].Key
+		for right < len(kvs) && kvs[right].Key == k {
+			right++
+		}
+		n := strconv.Itoa(right - idx)
+		if right != len(kvs) {
+			data = data + k + " " + n + "\n"
+		}
+		idx = right
 	}
 
 	// step5
 	ioutil.WriteFile(intermediateFileName, []byte(data), 1024)
-	intermediateFile.Close()
+	
+	log.Println("==> complete Map() ...")
 }
 
 func processReduceTask() {
 	fmt.Printf("Reduce \n")
-
 }
 
 //
