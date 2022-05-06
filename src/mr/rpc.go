@@ -14,33 +14,42 @@ import "strconv"
 // and reply for an RPC.
 //
 
-type ExampleArgs struct {
-	X int
+// type ExampleArgs struct {
+// 	X int
+// }
+
+// type ExampleReply struct {
+// 	Y int
+// }
+
+type ApplyTask struct {
+	WorkerId        string
+	PreTaskType     int8
+	PreTaskFileName string
 }
 
-type ExampleReply struct {
-	Y int
-}
-
-type RpcReq struct {
-	// 1 apply a task
-	// 2 map task completed
-	// 3 reduce task completed
-	ReqType int8
-}
-
-type RpcRep struct {
-	// 0 no task
-	// 1 map task
-	// 2 reduce task
-	RepType int8
-
-	// when ReqType != map task, the FilePath will be nil
+type ApplyTaskReply struct {
+	TaskType int8
+	NumReduce  int
 	FilePath string
 }
 
-// Add your RPC definitions here.
+type MapTaskComplete struct {
+	FilePath string
+}
 
+type MapTaskCompleteReply struct {
+}
+
+type ReduceTaskComplete struct {
+	workerId string
+}
+
+const NO_TASK_TYPE = 0
+const MAP_TASK_TYPE = 1
+const REDUCE_TASK_TYPE = 2
+
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.

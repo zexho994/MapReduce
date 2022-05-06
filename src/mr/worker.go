@@ -1,14 +1,12 @@
 package mr
 
 import (
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
-	"sort"
 	"strconv"
 )
 
@@ -46,22 +44,26 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	worker := worker{workerPid: strconv.Itoa(os.Getpid())}
+	at := ApplyTask{WorkerId: worker.workerPid}
 
 	for {
-		req := RpcReq{ReqType: 1}
-		rep := RpcRep{}
-		call("Master.ApplyTask", &req, &rep)
-		log.Println("rpc response.repType = ", rep.RepType)
+		atp := ApplyTaskReply{}
+		call("Master.ApplyTask", &at, &atp)
 
-		// no task and return
-		if rep.RepType == 0 {
+		if atp.TaskType == NO_TASK_TYPE {
+			log.Println("all tasks are complete")
 			return
-		}
-
-		if rep.RepType == 1 {
-			worker.processMapTask(rep.FilePath, mapf, reducef)
-		} else {
+		} else if atp.TaskType == MAP_TASK_TYPE {
+			log.Printf("receive a map task. filename = %v. nReduce = %v \n", atp.FilePath, atp.NumReduce)
+			worker.processMapTask(atp.FilePath, atp.NumReduce, mapf, reducef)
+			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: MAP_TASK_TYPE, PreTaskFileName: atp.FilePath}
+		} else if atp.TaskType == REDUCE_TASK_TYPE {
+			log.Printf("receive a reduce task. filename = %v \n", atp.FilePath)
 			processReduceTask()
+			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: REDUCE_TASK_TYPE}
+		} else {
+			log.Fatal("atp task type error = ", atp.TaskType)
+			return
 		}
 	}
 
@@ -70,14 +72,10 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 // process map task
 // step1 : read file by filepath
 // step2 : split the file content and save to kv[]
-// step3 : create intermediate file and store to "workerId/filepath"
-// step4 : count the number of occurrences of words
-// step5 : append kv[] to intermediate file
-func (w *worker) processMapTask(filepath string, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	log.Println("==> start Map() ...  filepath")
-	log.Println("fileName = ", filepath)
+// step3 : append kv[] to inter file "inter_x" that the x is hash(key)%nReduce
+func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, string) []KeyValue, reducef func(string, []string) string) bool {
+	log.Printf("🧩 start Map(%v, %v).", filepath, nReduce)
 
-	// step1
 	file, err := os.Open(filepath)
 	if err != nil {
 		log.Fatalf("cannot open %v", filepath)
@@ -88,44 +86,27 @@ func (w *worker) processMapTask(filepath string, mapf func(string, string) []Key
 	}
 	file.Close()
 
-	// step2
-	kvs := []KeyValue{}
-	kva := mapf(filepath, string(content))
-	kvs = append(kvs, kva...)
-	sort.Sort(ByKey(kvs))
+	kvs := mapf(filepath, string(content))
+	log.Printf("kvs length = %v \n", len(kvs))
 
-	// step3
-	if _, err := os.Stat(w.workerPid); errors.Is(err, os.ErrNotExist) {
-		log.Println("mkdir ", w.workerPid)
-		err := os.Mkdir(w.workerPid, os.ModePerm)
-		if err != nil {
-			log.Println("mkdir err", err)
-			return
+	fileMap := make(map[string]*os.File, nReduce)
+	for _, kv := range kvs {
+		interFileBucket := strconv.Itoa(ihash(kv.Key) % nReduce)
+		if fileMap[interFileBucket] == nil {
+			fileMap[interFileBucket], _ = os.OpenFile("inter_"+interFileBucket+".txt", os.O_APPEND|os.O_WRONLY, 644)
+			defer fileMap[interFileBucket].Close()
 		}
-	}
-	intermediateFileName := w.workerPid + "/" + filepath
-	intermediateFile, _ := os.Create(intermediateFileName)
-	defer intermediateFile.Close()
-
-	// step4
-	data := ""
-	for idx := 0; idx < len(kvs); {
-		right := idx + 1
-		k := kvs[idx].Key
-		for right < len(kvs) && kvs[right].Key == k {
-			right++
-		}
-		n := strconv.Itoa(right - idx)
-		if right != len(kvs) {
-			data = data + k + " " + n + "\n"
-		}
-		idx = right
+		line := kv.Key + " " + kv.Value + "\n"
+		fileMap[interFileBucket].WriteString(line)
+		// log.Printf("append line to file. line = %v. file = %v \n", line, fileMap[interFileBucket].Name())
 	}
 
-	// step5
-	ioutil.WriteFile(intermediateFileName, []byte(data), 1024)
-	
-	log.Println("==> complete Map() ...")
+	for _, file := range fileMap {
+		file.Close()
+	}
+
+	log.Println("🎉 Map() finished.")
+	return true
 }
 
 func processReduceTask() {
@@ -161,6 +142,7 @@ func processReduceTask() {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
+	log.Printf("call %v", rpcname)
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)
