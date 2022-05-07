@@ -1,27 +1,7 @@
 package mr
 
-//
-// RPC definitions.
-//
-// remember to capitalize all names.
-//
-
 import "os"
 import "strconv"
-
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-// type ExampleArgs struct {
-// 	X int
-// }
-
-// type ExampleReply struct {
-// 	Y int
-// }
-
 type ApplyTask struct {
 	WorkerId        string
 	PreTaskType     int8
@@ -32,17 +12,6 @@ type ApplyTaskReply struct {
 	TaskType int8
 	NumReduce  int
 	FilePath string
-}
-
-type MapTaskComplete struct {
-	FilePath string
-}
-
-type MapTaskCompleteReply struct {
-}
-
-type ReduceTaskComplete struct {
-	workerId string
 }
 
 const NO_TASK_TYPE = 0
