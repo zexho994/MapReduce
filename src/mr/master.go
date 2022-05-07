@@ -10,7 +10,6 @@ import (
 )
 
 type Master struct {
-	// Your definitions here.
 	files                []string
 	filesIdx             int
 	nMap                 int
@@ -23,8 +22,6 @@ type task struct {
 	Type   int
 	Status int
 }
-
-// Your code here -- RPC handlers for the worker to call.
 
 //
 // Process worker rpc request that get task or task completed notice etc.
@@ -56,16 +53,6 @@ func (m *Master) ApplyTask(req *ApplyTask, rep *ApplyTaskReply) error {
 
 	return nil
 }
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-// func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-// 	reply.Y = args.X + 1
-// 	return nil
-// }
 
 //
 // start a thread that listens for RPCs from worker.go
