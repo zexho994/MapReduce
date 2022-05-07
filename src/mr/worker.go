@@ -1,13 +1,16 @@
 package mr
 
 import (
+	"bufio"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/rpc"
-	"os"
+	os "os"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 //
@@ -58,8 +61,8 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			worker.processMapTask(atp.FilePath, atp.NumReduce, mapf, reducef)
 			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: MAP_TASK_TYPE, PreTaskFileName: atp.FilePath}
 		} else if atp.TaskType == REDUCE_TASK_TYPE {
-			log.Printf("receive a reduce task. filename = %v \n", atp.FilePath)
-			processReduceTask()
+			log.Printf("receive a reduce task. reduceIdx = %v \n", atp.ReduceIdx)
+			worker.processReduceTask(atp.ReduceIdx, reducef)
 			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: REDUCE_TASK_TYPE}
 		} else {
 			log.Fatal("atp task type error = ", atp.TaskType)
@@ -89,29 +92,80 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 	kvs := mapf(filepath, string(content))
 	log.Printf("kvs length = %v \n", len(kvs))
 
-	fileMap := make(map[string]*os.File, nReduce)
+	fileMap := make(map[int]*os.File, nReduce)
 	for _, kv := range kvs {
-		interFileBucket := strconv.Itoa(ihash(kv.Key) % nReduce)
+		interFileBucket := getBucketIdx(kv.Key, nReduce)
 		if fileMap[interFileBucket] == nil {
-			fileMap[interFileBucket], _ = os.OpenFile("inter_"+interFileBucket+".txt", os.O_APPEND|os.O_WRONLY, 644)
+			fileMap[interFileBucket], _ = os.OpenFile(getIntermediateFileName(strconv.Itoa(getBucketIdx(kv.Key, nReduce))), os.O_APPEND|os.O_WRONLY, 644)
 			defer fileMap[interFileBucket].Close()
 		}
 		line := kv.Key + " " + kv.Value + "\n"
 		fileMap[interFileBucket].WriteString(line)
 	}
 
-	for _, file := range fileMap {
-		file.Close()
-	}
-
 	log.Println("🎉 Map() finished.")
 	return true
 }
 
-func processReduceTask() {
-	fmt.Printf("Reduce \n")
+// processReduceTask
+// step1: read intermediate file by reduceIdx
+// step2: count the number of word
+// step3: write the data of step2 to mr-out-{reduceIdx}
+func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string) string) {
+	log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
+
+	// read from intermediate file 'inter_{reduceIdx}.txt'
+	interFileName := getIntermediateFileName(strconv.Itoa(reduceIdx))
+	interFile, err := os.OpenFile(interFileName, os.O_RDONLY, 644)
+	log.Printf("get intermediate file %v \n", interFile.Name())
+	if err != nil {
+		log.Fatalf("open intermediate file error. filename = %v. err = %v \n", interFileName, err)
+	}
+
+	// count the number of word
+	var interKV []KeyValue
+	fs := bufio.NewScanner(interFile)
+	for fs.Scan() {
+		strLine := fs.Text()
+		strLineSplit := strings.Split(strLine, " ")
+		interKV = append(interKV, KeyValue{strLineSplit[0], strLineSplit[1]})
+	}
+	interFile.Close()
+	sort.Sort(ByKey(interKV))
+	log.Printf("interKV len = %v \n", len(interKV))
+
+	// write kv to mr-out-{reduceIdx}
+	reduceFileName := "mr-out-" + strconv.Itoa(reduceIdx) + ".txt"
+	reduceFile, _ := os.OpenFile(reduceFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+
+	i := 0
+	for i < len(interKV) {
+		var values []string
+		j := i + 1
+		for j < len(interKV) && interKV[j].Key == interKV[i].Key {
+			j++
+		}
+		for k := i; k < j; k++ {
+			values = append(values, interKV[k].Value)
+		}
+		count := reducef(interKV[i].Key, values)
+		log.Printf("reducef key : count = %v : %v \n", interKV[i].Key, count)
+		reduceFile.WriteString(interKV[i].Key + " " + count + "\n")
+
+		i = j
+	}
+
+	reduceFile.Close()
+	log.Println("🎉 Reduce() finished.")
 }
 
+func getBucketIdx(k string, bucketSize int) int {
+	return ihash(k) % bucketSize
+}
+
+func getIntermediateFileName(k string) string {
+	return "inter_" + k + ".txt"
+}
 
 //
 // send an RPC request to the master, wait for the response.

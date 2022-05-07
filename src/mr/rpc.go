@@ -2,6 +2,7 @@ package mr
 
 import "os"
 import "strconv"
+
 type ApplyTask struct {
 	WorkerId        string
 	PreTaskType     int8
@@ -9,9 +10,10 @@ type ApplyTask struct {
 }
 
 type ApplyTaskReply struct {
-	TaskType int8
-	NumReduce  int
-	FilePath string
+	TaskType  int8
+	FilePath  string
+	NumReduce int
+	ReduceIdx int
 }
 
 const NO_TASK_TYPE = 0
