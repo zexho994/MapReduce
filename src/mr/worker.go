@@ -47,7 +47,7 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	worker := worker{workerPid: strconv.Itoa(os.Getpid())}
-	at := ApplyTask{WorkerId: worker.workerPid}
+	at := ApplyTask{}
 
 	for {
 		atp := ApplyTaskReply{}
@@ -57,13 +57,11 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			log.Println("all tasks are complete")
 			return
 		} else if atp.TaskType == MAP_TASK_TYPE {
-			log.Printf("receive a map task. filename = %v. nReduce = %v \n", atp.FilePath, atp.NumReduce)
-			worker.processMapTask(atp.FilePath, atp.NumReduce, mapf, reducef)
-			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: MAP_TASK_TYPE, PreTaskFileName: atp.FilePath}
+			log.Printf("receive a map task. filename = %v. nReduce = %v \n", atp.FileName, atp.CountOfReduce)
+			worker.processMapTask(atp.FileName, atp.CountOfReduce, mapf, reducef)
 		} else if atp.TaskType == REDUCE_TASK_TYPE {
 			log.Printf("receive a reduce task. reduceIdx = %v \n", atp.ReduceIdx)
 			worker.processReduceTask(atp.ReduceIdx, reducef)
-			at = ApplyTask{WorkerId: worker.workerPid, PreTaskType: REDUCE_TASK_TYPE}
 		} else {
 			log.Fatal("atp task type error = ", atp.TaskType)
 			return
@@ -96,7 +94,7 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 	for _, kv := range kvs {
 		interFileBucket := getBucketIdx(kv.Key, nReduce)
 		if fileMap[interFileBucket] == nil {
-			fileMap[interFileBucket], _ = os.OpenFile(getIntermediateFileName(strconv.Itoa(getBucketIdx(kv.Key, nReduce))), os.O_APPEND|os.O_WRONLY, 644)
+			fileMap[interFileBucket], _ = os.OpenFile(getIntermediateFileName(strconv.Itoa(getBucketIdx(kv.Key, nReduce))), os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 			defer fileMap[interFileBucket].Close()
 		}
 		line := kv.Key + " " + kv.Value + "\n"
@@ -112,12 +110,12 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 // step2: count the number of word
 // step3: write the data of step2 to mr-out-{reduceIdx}
 func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string) string) {
-	log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
+	//log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
 
-	// read from intermediate file 'inter_{reduceIdx}.txt'
+	// read from intermediate file 'inter_{reduceIdx}'
 	interFileName := getIntermediateFileName(strconv.Itoa(reduceIdx))
 	interFile, err := os.OpenFile(interFileName, os.O_RDONLY, 644)
-	log.Printf("get intermediate file %v \n", interFile.Name())
+	//log.Printf("get intermediate file %v \n", interFile.Name())
 	if err != nil {
 		log.Fatalf("open intermediate file error. filename = %v. err = %v \n", interFileName, err)
 	}
@@ -132,10 +130,10 @@ func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string)
 	}
 	interFile.Close()
 	sort.Sort(ByKey(interKV))
-	log.Printf("interKV len = %v \n", len(interKV))
+	//log.Printf("interKV len = %v \n", len(interKV))
 
 	// write kv to mr-out-{reduceIdx}
-	reduceFileName := "mr-out-" + strconv.Itoa(reduceIdx) + ".txt"
+	reduceFileName := "mr-out-" + strconv.Itoa(reduceIdx)
 	reduceFile, _ := os.OpenFile(reduceFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 
 	i := 0
@@ -149,14 +147,13 @@ func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string)
 			values = append(values, interKV[k].Value)
 		}
 		count := reducef(interKV[i].Key, values)
-		log.Printf("reducef key : count = %v : %v \n", interKV[i].Key, count)
 		reduceFile.WriteString(interKV[i].Key + " " + count + "\n")
 
 		i = j
 	}
 
 	reduceFile.Close()
-	log.Println("🎉 Reduce() finished.")
+	//log.Println("🎉 Reduce() finished.")
 }
 
 func getBucketIdx(k string, bucketSize int) int {
@@ -164,7 +161,7 @@ func getBucketIdx(k string, bucketSize int) int {
 }
 
 func getIntermediateFileName(k string) string {
-	return "inter_" + k + ".txt"
+	return "inter_" + k
 }
 
 //
@@ -173,7 +170,7 @@ func getIntermediateFileName(k string) string {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	log.Printf("call %v", rpcname)
+	//log.Printf("call %v", rpcname)
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)

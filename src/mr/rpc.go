@@ -3,22 +3,23 @@ package mr
 import "os"
 import "strconv"
 
-type ApplyTask struct {
-	WorkerId        string
-	PreTaskType     int8
-	PreTaskFileName string
-}
-
-type ApplyTaskReply struct {
-	TaskType  int8
-	FilePath  string
-	NumReduce int
-	ReduceIdx int
-}
-
 const NO_TASK_TYPE = 0
 const MAP_TASK_TYPE = 1
 const REDUCE_TASK_TYPE = 2
+
+type ApplyTask struct {
+	CommitTaskId   int
+	CommitTaskType int
+}
+
+type ApplyTaskReply struct {
+	TaskId   int
+	TaskType int
+	FileName      string
+	CountOfReduce int
+	ReduceIdx     int
+}
+
 
 // Add your RPC definitions here.
 

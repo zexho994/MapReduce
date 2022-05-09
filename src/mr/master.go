@@ -10,18 +10,10 @@ import (
 )
 
 type Master struct {
-	files                []string
-	nMap                 int
-	nReduce              int
-	mapIdx               int
-	reduceIdx            int
-	nCompletedMapTask    int
-	nCompletedReduceTask int
-}
-
-type task struct {
-	Type   int
-	Status int
+	files       []string
+	nReduce     int
+	mapTasks    *taskPoll
+	reduceTasks *taskPoll
 }
 
 // ApplyTask
@@ -29,30 +21,24 @@ type task struct {
 // step1 : 检查请求是否包含上一个任务完成情况
 // step2 : 根据 job 情况分配 task
 func (m *Master) ApplyTask(req *ApplyTask, rep *ApplyTaskReply) error {
-	log.Printf("worker apply task. workerId = %v. nReduce = %v. nCompleteMap = %v. nCompleteReduce = %v. \n", req.WorkerId, m.nReduce, m.nCompletedMapTask, m.nCompletedReduceTask)
+	log.Printf("worker apply task. commitTaskId = %v. commitTaskType = %v \n", req.CommitTaskId, req.CommitTaskType)
 
 	// 记录上一个task的运行情况
-	if req.PreTaskType == MAP_TASK_TYPE {
-		log.Println("map task were complete. filepath = ", req.PreTaskFileName)
-		m.nCompletedMapTask++
-	} else if req.PreTaskType == REDUCE_TASK_TYPE {
-		log.Println("reduce task were complete.")
-		m.nCompletedReduceTask++
+	if req.CommitTaskType == MAP_TASK_TYPE {
+		m.mapTasks.Commit(req.CommitTaskId)
+	} else if req.CommitTaskType == REDUCE_TASK_TYPE {
+		m.reduceTasks.Commit(req.CommitTaskId)
 	}
 
 	// 根据job情况分配task
-	if m.nCompletedMapTask < m.nMap {
+	if t := m.mapTasks.GetTask(); t != nil {
+		rep.TaskId = t.Id
 		rep.TaskType = MAP_TASK_TYPE
-		rep.NumReduce = m.nReduce
-		rep.FilePath = m.files[m.mapIdx]
-		m.mapIdx++
-	} else if m.nCompletedReduceTask < m.nReduce {
-		rep.NumReduce = m.nReduce
-		rep.TaskType = REDUCE_TASK_TYPE
-		rep.ReduceIdx = m.reduceIdx
-		m.reduceIdx++
+		rep.FileName = m.files[t.Id]
+		rep.CountOfReduce = m.reduceTasks.Size()
+	} else if t := m.reduceTasks.GetTask(); t != nil {
+
 	}
-	log.Printf("assign task to worker. workerId = %v. taskType = %v. nReduce = %v. filepath = %v.", req.WorkerId, rep.TaskType, rep.NumReduce, rep.FilePath)
 
 	return nil
 }
@@ -86,10 +72,8 @@ func (m *Master) Done() bool {
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeMaster(files []string, nReduce int) *Master {
-	m := Master{files: files, mapIdx: 0, nMap: len(files), nReduce: nReduce, nCompletedReduceTask: 0}
-	log.Printf("create Master. file size = %v. nReduce = %v \n", len(files), nReduce)
-
-	// Your code here.
+	m := Master{files: files, nReduce: nReduce, mapTasks: TaskPoll(len(files)), reduceTasks: TaskPoll(nReduce)}
+	log.Printf("create Master. file size = %v. nReduce = %v mapTasks len = %v \n", len(files), nReduce, m.mapTasks.Size())
 
 	// create inter files
 	for i := 0; i < nReduce; i++ {
