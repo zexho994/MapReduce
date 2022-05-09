@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
-	"strconv"
 )
 
 type Master struct {
@@ -37,7 +36,10 @@ func (m *Master) ApplyTask(req *ApplyTask, rep *ApplyTaskReply) error {
 		rep.FileName = m.files[t.Id]
 		rep.CountOfReduce = m.reduceTasks.Size()
 	} else if t := m.reduceTasks.GetTask(); t != nil {
-
+		rep.TaskId = t.Id
+		rep.TaskType = REDUCE_TASK_TYPE
+		rep.CountOfReduce = m.reduceTasks.Size()
+		rep.ReduceIdx = t.Id
 	}
 
 	return nil
@@ -74,17 +76,6 @@ func (m *Master) Done() bool {
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{files: files, nReduce: nReduce, mapTasks: TaskPoll(len(files)), reduceTasks: TaskPoll(nReduce)}
 	log.Printf("create Master. file size = %v. nReduce = %v mapTasks len = %v \n", len(files), nReduce, m.mapTasks.Size())
-
-	// create inter files
-	for i := 0; i < nReduce; i++ {
-		fileName := "inter_" + strconv.Itoa(i) + ".txt"
-		_, err := os.Create(fileName)
-		if err != nil {
-			log.Fatalf("create file '%v' err. %v", fileName, err)
-			return nil
-		}
-	}
-
 	m.server()
 	return &m
 }

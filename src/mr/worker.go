@@ -59,9 +59,13 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		} else if atp.TaskType == MAP_TASK_TYPE {
 			log.Printf("receive a map task. filename = %v. nReduce = %v \n", atp.FileName, atp.CountOfReduce)
 			worker.processMapTask(atp.FileName, atp.CountOfReduce, mapf, reducef)
+			at.CommitTaskType = MAP_TASK_TYPE
+			at.CommitTaskId = atp.TaskId
 		} else if atp.TaskType == REDUCE_TASK_TYPE {
 			log.Printf("receive a reduce task. reduceIdx = %v \n", atp.ReduceIdx)
 			worker.processReduceTask(atp.ReduceIdx, reducef)
+			at.CommitTaskType = REDUCE_TASK_TYPE
+			at.CommitTaskId = atp.TaskId
 		} else {
 			log.Fatal("atp task type error = ", atp.TaskType)
 			return
@@ -110,12 +114,12 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 // step2: count the number of word
 // step3: write the data of step2 to mr-out-{reduceIdx}
 func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string) string) {
-	//log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
+	log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
 
 	// read from intermediate file 'inter_{reduceIdx}'
 	interFileName := getIntermediateFileName(strconv.Itoa(reduceIdx))
 	interFile, err := os.OpenFile(interFileName, os.O_RDONLY, 644)
-	//log.Printf("get intermediate file %v \n", interFile.Name())
+	log.Printf("get intermediate file %v \n", interFile.Name())
 	if err != nil {
 		log.Fatalf("open intermediate file error. filename = %v. err = %v \n", interFileName, err)
 	}
@@ -130,7 +134,7 @@ func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string)
 	}
 	interFile.Close()
 	sort.Sort(ByKey(interKV))
-	//log.Printf("interKV len = %v \n", len(interKV))
+	log.Printf("interKV len = %v \n", len(interKV))
 
 	// write kv to mr-out-{reduceIdx}
 	reduceFileName := "mr-out-" + strconv.Itoa(reduceIdx)
@@ -153,7 +157,7 @@ func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string)
 	}
 
 	reduceFile.Close()
-	//log.Println("🎉 Reduce() finished.")
+	log.Println("🎉 Reduce() finished.")
 }
 
 func getBucketIdx(k string, bucketSize int) int {
