@@ -63,11 +63,7 @@ func (m *Master) server() {
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
 func (m *Master) Done() bool {
-	ret := false
-
-	// Your code here.
-
-	return ret
+	return m.reduceTasks.IsAllCompleted()
 }
 
 // MakeMaster
