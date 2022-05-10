@@ -36,21 +36,23 @@ func TaskPoll(size int) *taskPoll {
 }
 
 func checkExpiredTask(tp *taskPoll) {
-	for tp.nCompleted < tp.Size() {
+	for !tp.IsAllCompleted() {
+		log.Printf("check expired task")
 		for _, t := range tp.tasks {
 			if t.IsExpired() {
+				log.Printf("rollback task state")
 				t.SetPreState()
 			}
 		}
-		time.Sleep(1000)
+		time.Sleep(2 * time.Second)
 	}
 }
 
 func (tp *taskPoll) Commit(tid int) {
-	tp.nCompleted++
 	for _, t := range tp.tasks {
 		if t.Id == tid {
 			t.setNextState()
+			tp.nCompleted++
 		}
 	}
 
@@ -62,7 +64,7 @@ func (tp *taskPoll) GetTask() *task {
 		for _, t := range tp.tasks {
 			if t.IsReady() {
 				t.setNextState()
-				t.StartTime = time.Now().UTC().Unix()
+				t.StartTime = time.Now().UTC()
 				return t
 			}
 		}
@@ -74,7 +76,7 @@ func (tp *taskPoll) GetTask() *task {
 type task struct {
 	Id        int
 	State     int
-	StartTime int64
+	StartTime time.Time
 }
 
 func Task(id int) *task {
@@ -104,5 +106,6 @@ func (t *task) IsReady() bool {
 }
 
 func (t *task) IsExpired() bool {
-	return t.State == RUNNING && time.Now().Unix()-t.StartTime > 1000
+	expired_time, _ := time.ParseDuration("-10s")
+	return t.State == RUNNING && time.Now().Add(expired_time).After(t.StartTime)
 }
