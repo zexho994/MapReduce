@@ -1,2 +1,1 @@
-rm mr-out-*
-rm inter_*
+rm -rf mr-*

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
 )
 
 type Master struct {
@@ -72,6 +73,12 @@ func (m *Master) Done() bool {
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{files: files, nReduce: nReduce, mapTasks: TaskPoll(len(files)), reduceTasks: TaskPoll(nReduce)}
 	log.Printf("create Master. file size = %v. nReduce = %v mapTasks len = %v \n", len(files), nReduce, m.mapTasks.Size())
+
+	for i := 0; i < nReduce; i++ {
+		os.Create("mr-inter-" + strconv.Itoa(i))
+		os.Create("mr-out-" +strconv.Itoa(i))
+	}
+
 	m.server()
 	return &m
 }

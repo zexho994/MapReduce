@@ -57,12 +57,12 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			log.Println("all tasks are complete")
 			return
 		} else if atp.TaskType == MAP_TASK_TYPE {
-			log.Printf("receive a map task. filename = %v. nReduce = %v \n", atp.FileName, atp.CountOfReduce)
+			log.Printf("receive a map task. taskId = %v. filename = %v. nReduce = %v \n", atp.TaskId, atp.FileName, atp.CountOfReduce)
 			worker.processMapTask(atp.FileName, atp.CountOfReduce, mapf, reducef)
 			at.CommitTaskType = MAP_TASK_TYPE
 			at.CommitTaskId = atp.TaskId
 		} else if atp.TaskType == REDUCE_TASK_TYPE {
-			log.Printf("receive a reduce task. reduceIdx = %v \n", atp.ReduceIdx)
+			log.Printf("receive a reduce task. taskId = %v. reduceIdx = %v \n", atp.TaskId, atp.ReduceIdx)
 			worker.processReduceTask(atp.ReduceIdx, reducef)
 			at.CommitTaskType = REDUCE_TASK_TYPE
 			at.CommitTaskId = atp.TaskId
@@ -71,13 +71,12 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			return
 		}
 	}
-
 }
 
 // process map task
 // step1 : read file by filepath
 // step2 : split the file content and save to kv[]
-// step3 : append kv[] to inter file "inter_x" that the x is hash(key)%nReduce
+// step3 : append kv[] to inter file "mr-inter-x" that the x is hash(key)%nReduce
 func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, string) []KeyValue, reducef func(string, []string) string) bool {
 	log.Printf("🧩 start Map(%v, %v).", filepath, nReduce)
 
@@ -98,7 +97,7 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 	for _, kv := range kvs {
 		interFileBucket := getBucketIdx(kv.Key, nReduce)
 		if fileMap[interFileBucket] == nil {
-			fileMap[interFileBucket], _ = os.OpenFile(getIntermediateFileName(strconv.Itoa(getBucketIdx(kv.Key, nReduce))), os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+			fileMap[interFileBucket], _ = os.OpenFile(getIntermediateFileName(strconv.Itoa(getBucketIdx(kv.Key, nReduce))), os.O_APPEND|os.O_WRONLY, os.ModePerm)
 			defer fileMap[interFileBucket].Close()
 		}
 		line := kv.Key + " " + kv.Value + "\n"
@@ -116,9 +115,9 @@ func (w *worker) processMapTask(filepath string, nReduce int, mapf func(string, 
 func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string) string) {
 	log.Printf("🧱 start Reduce(%v) \n", reduceIdx)
 
-	// read from intermediate file 'inter_{reduceIdx}'
+	// read from intermediate file 'mr-inter-{reduceIdx}'
 	interFileName := getIntermediateFileName(strconv.Itoa(reduceIdx))
-	interFile, err := os.OpenFile(interFileName, os.O_RDONLY, 644)
+	interFile, err := os.OpenFile(interFileName, os.O_RDONLY, os.ModePerm)
 	log.Printf("get intermediate file %v \n", interFile.Name())
 	if err != nil {
 		log.Fatalf("open intermediate file error. filename = %v. err = %v \n", interFileName, err)
@@ -138,7 +137,7 @@ func (w *worker) processReduceTask(reduceIdx int, reducef func(string, []string)
 
 	// write kv to mr-out-{reduceIdx}
 	reduceFileName := "mr-out-" + strconv.Itoa(reduceIdx)
-	reduceFile, _ := os.OpenFile(reduceFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	reduceFile, _ := os.OpenFile(reduceFileName, os.O_APPEND|os.O_WRONLY, os.ModePerm)
 
 	i := 0
 	for i < len(interKV) {
@@ -165,7 +164,7 @@ func getBucketIdx(k string, bucketSize int) int {
 }
 
 func getIntermediateFileName(k string) string {
-	return "inter_" + k
+	return "mr-inter-" + k
 }
 
 //
