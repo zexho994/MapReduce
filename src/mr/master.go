@@ -76,7 +76,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	for i := 0; i < nReduce; i++ {
 		os.Create("mr-inter-" + strconv.Itoa(i))
-		os.Create("mr-out-" +strconv.Itoa(i))
+		os.Create("mr-out-" + strconv.Itoa(i))
 	}
 
 	m.server()

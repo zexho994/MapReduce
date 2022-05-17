@@ -13,13 +13,12 @@ type ApplyTask struct {
 }
 
 type ApplyTaskReply struct {
-	TaskId   int
-	TaskType int
+	TaskId        int
+	TaskType      int
 	FileName      string
 	CountOfReduce int
 	ReduceIdx     int
 }
-
 
 // Add your RPC definitions here.
 
