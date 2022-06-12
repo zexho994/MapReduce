@@ -3,8 +3,8 @@ package raft
 //
 // support for Raft tester.
 //
-// we will use the original config.go to test your code for grading.
-// so, while you can modify this code to help you debug, please
+// we will use the original config.go to test your Code for grading.
+// so, while you can modify this Code to help you debug, please
 // test with the original before submitting.
 //
 
@@ -316,7 +316,7 @@ func (cfg *config) checkOneLeader() int {
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {
 			if len(leaders) > 1 {
-				cfg.t.Fatalf("term %d has %d (>1) leaders", term, len(leaders))
+				cfg.t.Fatalf("CurTerm %d has %d (>1) leaders", term, len(leaders))
 			}
 			if term > lastTermWithLeader {
 				lastTermWithLeader = term
@@ -331,7 +331,7 @@ func (cfg *config) checkOneLeader() int {
 	return -1
 }
 
-// check that everyone agrees on the term.
+// check that everyone agrees on the CurTerm.
 func (cfg *config) checkTerms() int {
 	term := -1
 	for i := 0; i < cfg.n; i++ {
@@ -340,7 +340,7 @@ func (cfg *config) checkTerms() int {
 			if term == -1 {
 				term = xterm
 			} else if term != xterm {
-				cfg.t.Fatalf("servers disagree on term")
+				cfg.t.Fatalf("servers disagree on CurTerm")
 			}
 		}
 	}
