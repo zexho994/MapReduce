@@ -102,8 +102,6 @@ func (rf *Raft) changeToLeader() {
 func (rf *Raft) changeToCandidate() {
 	log.Printf("[raft-%v %v %v] 修改状态 => Candidate.\n", rf.me, rf.getRole(), rf.Term)
 	rf.Role = Candidate
-	rf.Term += 1
-	rf.VotedFor = rf.me
 }
 
 // 变成follower,重置投票情况
@@ -120,20 +118,16 @@ const Follower int32 = 2
 const Candidate int32 = 3
 
 func (rf *Raft) getRole() string {
-	return getRole(rf.Role)
-}
-
-func getRole(r int32) string {
-	if r == Leader {
+	if rf.Role == Leader {
 		return "Leader"
 	}
-	if r == Follower {
+	if rf.Role == Follower {
 		return "Follower"
 	}
-	if r == Candidate {
+	if rf.Role == Candidate {
 		return "Candidate"
 	}
-	log.Panicf("get Role error, r = %v \n", r)
+	log.Panicf("get Role error, r = %v \n", rf.Role)
 	return "Unknown"
 }
 
@@ -413,12 +407,7 @@ func (rf *Raft) maintainStateLoop() {
 // leader
 // step1 : send heartbeat to peers
 func (rf *Raft) maintainsLeader() {
-	if !rf.isLeader() {
-		return
-	}
 	args := AppendEntriesArgs{Peer: rf.me, Term: rf.Term}
-	wg := sync.WaitGroup{}
-	wg.Add(len(rf.peers) - 1)
 	for idx := range rf.peers {
 		if idx == rf.me {
 			continue
@@ -434,16 +423,14 @@ func (rf *Raft) maintainsLeader() {
 		}(rf.me, idx, rf.Term)
 	}
 	rf.mu.Unlock()
-
-	wg.Wait()
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 }
 
 func (rf *Raft) maintainsFollower() {
 	if rf.heartbeatTimeout() {
 		log.Printf("[raft-%v %v %v] 心跳超时.", rf.me, rf.getRole(), rf.Term)
 		rf.changeToCandidate()
-		rf.maintainsCandidate()
+		rf.mu.Unlock()
 	} else {
 		rf.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
@@ -454,14 +441,16 @@ func (rf *Raft) maintainsCandidate() {
 	// 检查超时
 	if !rf.heartbeatTimeout() {
 		rf.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 		return
 	}
 
 	// 发送投票RPC
 	log.Printf("[raft-%v %v %v] == 发起投票RPC == \n", rf.me, rf.getRole(), rf.Term)
-	args := RequestVoteArgs{Peer: rf.me, Term: rf.Term}
+	rf.VotedFor = rf.me
+	rf.Term += 1
 	voteReply := make(chan *RequestVoteReply)
+	args := RequestVoteArgs{Peer: rf.me, Term: rf.Term}
 	for idx := range rf.peers {
 		if rf.me == idx {
 			continue
@@ -472,21 +461,18 @@ func (rf *Raft) maintainsCandidate() {
 			voteReply <- &reply
 		}(rf.me, idx, rf.Term)
 	}
+	maxTerm := rf.Term
+	sumVotes := len(rf.peers)
 	rf.mu.Unlock()
 
 	// 处理投票回复
-	maxTerm := rf.Term
-	sumVotes := len(rf.peers)
 	validVotes, acceptVotes := 1, 1
 	select {
 	case reply := <-voteReply:
-		log.Printf("[raft-%v-%v-%v] 收到%v投票结果 => %v\n", rf.me, rf.getRole(), rf.Term, reply.Peer, reply.VoteGranted)
 		validVotes++
 		if reply.VoteGranted {
-			log.Printf("[raft-%v-%v-%v] 投票结果: 获得%v的赞同票.\n", rf.me, rf.getRole(), rf.Term, reply.Peer)
 			acceptVotes++
 		} else if reply.Term > maxTerm {
-			log.Printf("[raft-%v-%v-%v] 投票结果: %v有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, reply.Peer, reply.Term)
 			maxTerm = reply.Term
 		}
 		if validVotes > sumVotes/2 {
@@ -499,6 +485,7 @@ VotedDone:
 	rf.mu.Lock()
 	if rf.killed() || !rf.isCandidate() {
 	} else if maxTerm > rf.Term {
+		log.Printf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
 		rf.changeToFollower(maxTerm)
 	} else if rf.isQuorum(acceptVotes) {
 		log.Printf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
