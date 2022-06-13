@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -30,18 +33,18 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	// sleep a bit to avoid racing with followers learning of the
-	// election, then check that all peers agree on the CurTerm.
+	// election, then check that all peers agree on the Term.
 	time.Sleep(50 * time.Millisecond)
 	term1 := cfg.checkTerms()
 	if term1 < 1 {
-		t.Fatalf("CurTerm is %v, but should be at least 1", term1)
+		t.Fatalf("Term is %v, but should be at least 1", term1)
 	}
 
-	// does the leader+CurTerm stay the same if there is no network failure?
+	// does the leader+Term stay the same if there is no network failure?
 	time.Sleep(2 * RaftElectionTimeout)
 	term2 := cfg.checkTerms()
 	if term1 != term2 {
-		fmt.Printf("warning: CurTerm changed even though there were no failures")
+		fmt.Printf("warning: Term changed even though there were no failures")
 	}
 
 	// there should still be a leader.
@@ -58,15 +61,18 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
+	log.Print("<<< Test(2A) stage1 passing >>>")
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
+	log.Print("<<< Test(2A) stage2 passing >>>")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	log.Print("<<< Test(2A) stage3 passing >>>")
 
 	// if there's no quorum, no leader should
 	// be elected.
@@ -74,14 +80,17 @@ func TestReElection2A(t *testing.T) {
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
+	log.Print("<<< Test(2A) stage4 passing >>>")
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
+	log.Print("<<< Test(2A) stage5 passing >>>")
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
+	log.Print("<<< Test(2A) stage6 passing >>>")
 
 	cfg.end()
 }
@@ -274,7 +283,7 @@ loop:
 
 		for j := 0; j < servers; j++ {
 			if t, _ := cfg.rafts[j].GetState(); t != term {
-				// CurTerm changed -- can't expect low RPC counts
+				// Term changed -- can't expect low RPC counts
 				continue loop
 			}
 		}
@@ -324,7 +333,7 @@ loop:
 	}
 
 	if !success {
-		t.Fatalf("CurTerm changed too often")
+		t.Fatalf("Term changed too often")
 	}
 
 	cfg.end()
@@ -486,11 +495,11 @@ loop:
 			cmds = append(cmds, x)
 			index1, term1, ok := cfg.rafts[leader].Start(x)
 			if term1 != term {
-				// CurTerm changed while starting
+				// Term changed while starting
 				continue loop
 			}
 			if !ok {
-				// No longer the leader, so CurTerm has changed
+				// No longer the leader, so Term has changed
 				continue loop
 			}
 			if starti+i != index1 {
@@ -502,7 +511,7 @@ loop:
 			cmd := cfg.wait(starti+i, servers, term)
 			if ix, ok := cmd.(int); ok == false || ix != cmds[i-1] {
 				if ix == -1 {
-					// CurTerm changed -- try again
+					// Term changed -- try again
 					continue loop
 				}
 				t.Fatalf("wrong value %v committed for index %v; expected %v\n", cmd, starti+i, cmds)
@@ -513,7 +522,7 @@ loop:
 		total2 = 0
 		for j := 0; j < servers; j++ {
 			if t, _ := cfg.rafts[j].GetState(); t != term {
-				// CurTerm changed -- can't expect low RPC counts
+				// Term changed -- can't expect low RPC counts
 				// need to keep going to update total2
 				failed = true
 			}
@@ -533,7 +542,7 @@ loop:
 	}
 
 	if !success {
-		t.Fatalf("CurTerm changed too often")
+		t.Fatalf("Term changed too often")
 	}
 
 	time.Sleep(RaftElectionTimeout)
@@ -679,7 +688,7 @@ func TestPersist32C(t *testing.T) {
 // probability (perhaps without committing the command), or crash after a while
 // with low probability (most likey committing the command).  If the number of
 // alive servers isn't enough to form a majority, perhaps start a new server.
-// The leader in a new CurTerm may try to finish replicating log entries that
+// The leader in a new Term may try to finish replicating log entries that
 // haven't been committed yet.
 //
 func TestFigure82C(t *testing.T) {
