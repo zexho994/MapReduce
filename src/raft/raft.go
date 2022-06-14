@@ -88,7 +88,7 @@ func (rf *Raft) isCandidate() bool {
 }
 
 func (rf *Raft) updateHeartbeatTime() {
-	rt := time.Duration(rand.Uint32()%120) + 180
+	rt := time.Duration(rand.Uint32()%150) + 150
 	rf.NextTimeout = time.Now().Add(rt * time.Millisecond)
 	//log.Printf("[raft-%v %v %v] 更新心跳时间 = %v \n", rf.me, rf.getRole(), rf.Term, rf.NextTimeout)
 }
@@ -138,10 +138,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your Code here (2A).
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	term = int(rf.Term)
 	isleader = rf.isLeader()
 	//log.Printf("[raft-%v %v %v] get state = %v\n", rf.me, getRole(rf.Role), term, isleader)
-	rf.mu.Unlock()
 	return term, isleader
 }
 
@@ -227,7 +227,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	//log.Printf("[raft-%v %v %v] 处理来自%v的投票. req.term = %v \n", rf.me, getRole(rf.Role), rf.Term, args.Peer, args.Term)
+	log.Printf("[raft-%v %v %v] 处理%v的投票RPC. T = %v \n", rf.me, rf.getRole(), rf.Term, args.Peer, args.Term)
 	reply.Term, reply.VoteGranted = rf.Term, false
 
 	// term太小，不理
@@ -245,6 +245,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		//进行投票
 		reply.VoteGranted = true
 		rf.VotedFor = args.Peer
+		rf.updateHeartbeatTime()
 	}
 }
 
@@ -483,18 +484,18 @@ func (rf *Raft) maintainsCandidate() {
 	//汇总投票结果
 VotedDone:
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if rf.killed() || !rf.isCandidate() {
 	} else if maxTerm > rf.Term {
-		//log.Printf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
+		log.Printf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
 		rf.changeToFollower(maxTerm)
 	} else if rf.isQuorum(acceptVotes) {
 		log.Printf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
 		rf.changeToLeader()
 	} else {
-		//log.Printf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
+		log.Printf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
 		rf.updateHeartbeatTime()
 	}
-	rf.mu.Unlock()
 }
 
 func (rf *Raft) isQuorum(accept int) bool {
