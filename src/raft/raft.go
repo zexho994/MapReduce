@@ -60,14 +60,29 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// = = = = 服务器持久保存的数据 = = = =
 	//任期号
 	Term int32
 	//获得选票的服务器
 	VotedFor int
 	//角色类型
 	Role int32
+	// 日志数据
+	Log []interface{}
+
+	// = = = = 所有服务器都会变的部分 = = = =
 	//下一个超时时间
 	NextTimeout time.Time
+	// 已经提交的日志索引
+	CommittedIndex int
+	// 最后应用到状态机的日志索引
+	LastAppliedIndex int
+
+	// = = = = Leader服务器会变的部分(选举后初始化) = = = =
+	//对于每⼀个服务器，需要发送给他的下⼀个⽇志条⽬的索引值（初始化为领导⼈最后索引值加⼀）
+	NextIndex []int
+	//对于每⼀个服务器，已经复制给他的⽇志的最⾼索引值
+	MatchIndex []int
 }
 
 func (rf *Raft) heartbeatTimeout() bool {
@@ -309,7 +324,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-//
+// Start
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -323,12 +338,18 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // Term. the third return value is true if this server believes it is
 // the leader.
 //
+// @param int index of committed log
+// @param int term
+// @param bool is true if this server believers it is the leader
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
 	isLeader := true
 
 	// Your Code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	index, term, isLeader = rf.CommittedIndex, int(rf.Term), rf.isLeader()
 
 	return index, term, isLeader
 }
