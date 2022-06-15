@@ -68,7 +68,7 @@ type Raft struct {
 	//角色类型
 	Role int32
 	// 日志数据
-	Log []interface{}
+	Log []LogEntry
 
 	// = = = = 所有服务器都会变的部分 = = = =
 	//下一个超时时间
@@ -83,6 +83,12 @@ type Raft struct {
 	NextIndex []int
 	//对于每⼀个服务器，已经复制给他的⽇志的最⾼索引值
 	MatchIndex []int
+}
+
+// 日志对象
+type LogEntry struct {
+	term    int32
+	command interface{}
 }
 
 func (rf *Raft) heartbeatTimeout() bool {
