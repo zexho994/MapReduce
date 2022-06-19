@@ -29,7 +29,7 @@ import "../labrpc"
 // import "bytes"
 // import "../labgob"
 
-//
+// ApplyMsg
 // as each Raft Peer becomes aware that successive log entries are
 // committed, the Peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
@@ -71,7 +71,7 @@ type Raft struct {
 	Log []LogEntry
 
 	// = = = = 所有服务器都会变的部分 = = = =
-	//下一个超时时间
+	// 下一个超时时间
 	NextTimeout time.Time
 	// 已经提交的日志索引
 	CommittedIndex int
@@ -83,16 +83,36 @@ type Raft struct {
 	NextIndex []int
 	//对于每⼀个服务器，已经复制给他的⽇志的最⾼索引值
 	MatchIndex []int
+
+	Apply chan ApplyMsg
 }
 
 // 日志对象
 type LogEntry struct {
-	term    int32
-	command interface{}
+	Index int
+	// 收到该日志时的term
+	Term int32
+	// 数据实体
+	Command interface{}
+	//
+	Copies int
+}
+
+func (rf *Raft) appendLog(nlog []LogEntry) {
+	for _, i := range nlog {
+		rf.Log = append(rf.Log, i)
+	}
+}
+
+func (rf *Raft) printLog() {
+	DPrintf("[raft-%v %v %v] ---- print log ---- \n", rf.me, rf.getRole(), rf.Term)
+	for i, l := range rf.Log {
+		DPrintf("[raft-%v %v %v] Log[%v] = %v \n", rf.me, rf.getRole(), rf.Term, i, l)
+	}
 }
 
 func (rf *Raft) heartbeatTimeout() bool {
-	//log.Printf("[raft-%v %v %v] now = %v,timeout = %v \n", rf.me, getRole(rf.Role), rf.Term, time.Now(), timeout)
+	//DPrintf("[raft-%v %v %v] now = %v,timeout = %v \n", rf.me, getRole(rf.Role), rf.Term, time.Now(), timeout)
 	return rf.NextTimeout.Before(time.Now())
 }
 
@@ -111,23 +131,27 @@ func (rf *Raft) isCandidate() bool {
 func (rf *Raft) updateHeartbeatTime() {
 	rt := time.Duration(rand.Uint32()%150) + 150
 	rf.NextTimeout = time.Now().Add(rt * time.Millisecond)
-	//log.Printf("[raft-%v %v %v] 更新心跳时间 = %v \n", rf.me, rf.getRole(), rf.Term, rf.NextTimeout)
+	//DPrintf("[raft-%v %v %v] 更新心跳时间 = %v \n", rf.me, rf.getRole(), rf.Term, rf.NextTimeout)
 }
 
 func (rf *Raft) changeToLeader() {
-	log.Printf("[raft-%v %v %v] 修改状态 => Leader .\n", rf.me, rf.getRole(), rf.Term)
+	DPrintf("[raft-%v %v %v] 修改状态 => Leader .\n", rf.me, rf.getRole(), rf.Term)
 	rf.Role = Leader
-	//log.Printf("[raft-%v %v] 修改后状态 => %v .\n", rf.me, rf.Term, getRole(rf.Role))
+	for i := range rf.NextIndex {
+		rf.NextIndex[i] = len(rf.Log)
+	}
+	rf.MatchIndex = make([]int, len(rf.peers))
+	//DPrintf("[raft-%v %v] 修改后状态 => %v .\n", rf.me, rf.Term, getRole(rf.Role))
 }
 
 func (rf *Raft) changeToCandidate() {
-	log.Printf("[raft-%v %v %v] 修改状态 => Candidate.\n", rf.me, rf.getRole(), rf.Term)
+	DPrintf("[raft-%v %v %v] 修改状态 => Candidate.\n", rf.me, rf.getRole(), rf.Term)
 	rf.Role = Candidate
 }
 
 // 变成follower,重置投票情况
 func (rf *Raft) changeToFollower(term int32) {
-	log.Printf("[raft-%v %v %v] 修改状态 => Follow. biggerTerm = %v \n", rf.me, rf.getRole(), rf.Term, term)
+	DPrintf("[raft-%v %v %v] 修改状态 => Follow. biggerTerm = %v \n", rf.me, rf.getRole(), rf.Term, term)
 	rf.Role = Follower
 	rf.Term = term
 	rf.VotedFor = -1
@@ -162,7 +186,7 @@ func (rf *Raft) GetState() (int, bool) {
 	defer rf.mu.Unlock()
 	term = int(rf.Term)
 	isleader = rf.isLeader()
-	//log.Printf("[raft-%v %v %v] get state = %v\n", rf.me, getRole(rf.Role), term, isleader)
+	//DPrintf("[raft-%v %v %v] get state = %v\n", rf.me, getRole(rf.Role), term, isleader)
 	return term, isleader
 }
 
@@ -214,6 +238,10 @@ type RequestVoteArgs struct {
 	Peer int
 	// 竞选人term
 	Term int32
+	// the last log index of candidate
+	LastLogIndex int
+	// the last term of candidate
+	LastLogTerm int32
 }
 
 //
@@ -228,12 +256,24 @@ type RequestVoteReply struct {
 }
 
 type AppendEntriesArgs struct {
+	// leader id
 	Peer int
+	// leader term
 	Term int32
+	// previous index of this log
+	PrevLogIndex int
+	// previous term of PrevLogIndex
+	PrevLogTerm int32
+	// logs
+	Entries []LogEntry
+	// the committed log index of leader
+	LeaderCommitted int
 }
 
 type AppendEntriesReply struct {
-	Term   int32
+	// replier term
+	Term int32
+	// rpc result
 	Result bool
 }
 
@@ -248,11 +288,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	log.Printf("[raft-%v %v %v] 处理%v的投票RPC. T = %v \n", rf.me, rf.getRole(), rf.Term, args.Peer, args.Term)
+	DPrintf("[raft-%v %v %v] 处理%v的投票RPC. T = %v \n", rf.me, rf.getRole(), rf.Term, args.Peer, args.Term)
 	reply.Term, reply.VoteGranted = rf.Term, false
 
-	// term太小，不理
+	// 候选人term太小，反对
 	if args.Term < rf.Term {
+		return
+	}
+
+	// 候选人日志太小，反对
+	if args.LastLogIndex < rf.LastAppliedIndex {
 		return
 	}
 
@@ -271,14 +316,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	logLen := 0
+	if args.Entries != nil {
+		logLen = len(args.Entries)
+	}
+	DPrintf("[raft-%v %v %v] 收到Leader心跳RPC. id = %v. term = %v. commit = %v. preIdx = %v. preTerm = %v. logLen = %v \n",
+		rf.me, rf.getRole(), rf.Term, args.Peer, args.Term, args.LeaderCommitted, args.PrevLogIndex, args.PrevLogTerm, logLen)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.killed() {
-		return
-	}
-	//log.Printf("[raft-%v %v %v] 接收来自%v的心跳请求. T = %v.\n", rf.me, rf.getRole(), rf.Term, args.Peer, args.Term)
-	reply.Term, reply.Result = rf.Term, args.Term >= rf.Term
-
+	reply.Term, reply.Result = rf.Term, false
 	if args.Term < rf.Term {
 		return
 	} else if rf.isCandidate() {
@@ -287,8 +334,44 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.updateHeartbeatTime()
 	}
 
+	if args.PrevLogIndex >= len(rf.Log) || (args.PrevLogIndex >= 0 && rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm) {
+		return
+	}
+	reply.Result = true
+
+	if args.Entries != nil {
+		// 新的日志数据覆盖到 []log 中
+		oldLen := len(rf.Log)
+		if args.PrevLogIndex < len(rf.Log) {
+			rf.Log = rf.Log[:args.PrevLogIndex+1]
+		}
+		rf.appendLog(args.Entries)
+		DPrintf("[raft-%v %v %v] 保存新日志, len from %v to %v. \n", rf.me, rf.getRole(), rf.Term, oldLen, len(rf.Log))
+	}
+
+	// 更新提交位置
+	ci := rf.CommittedIndex
+	if rf.CommittedIndex < args.LeaderCommitted {
+		rf.CommittedIndex = min(args.LeaderCommitted, len(rf.Log)-1)
+		DPrintf("[raft-%v %v %v] 更新日志提交索引, from %v to %v \n", rf.me, rf.getRole(), rf.Term, ci, rf.CommittedIndex)
+		rf.applyMsg()
+	}
 	// 日志操作lab-2A不实现
 	rf.persist()
+}
+
+func max(n1, n2 int) int {
+	if n1 > n2 {
+		return n1
+	}
+	return n2
+}
+
+func min(n1, n2 int) int {
+	if n1 < n2 {
+		return n1
+	}
+	return n2
 }
 
 //
@@ -355,8 +438,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your Code here (2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	index, term, isLeader = rf.CommittedIndex, int(rf.Term), rf.isLeader()
-
+	isLeader = rf.isLeader()
+	if isLeader {
+		index, term = len(rf.Log)+1, int(rf.Term)
+		DPrintf("[raft-%v %v %v] 客户端请求，cmd = %v \n", rf.me, rf.getRole(), rf.Term, command)
+		rf.Log = append(rf.Log, LogEntry{Index: index, Term: rf.Term, Command: command, Copies: 1})
+		//rf.printLog()
+	}
 	return index, term, isLeader
 }
 
@@ -397,7 +485,6 @@ func (rf *Raft) killed() bool {
 // me is the index of this Peer
 //
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
-	//log.Printf("== Make() ==")
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -408,6 +495,11 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.VotedFor = -1
 	// 设置下次心跳检查时间
 	rf.updateHeartbeatTime()
+	rf.LastAppliedIndex = -1
+	rf.CommittedIndex = -1
+	rf.NextIndex = make([]int, len(peers))
+	rf.MatchIndex = make([]int, len(peers))
+	rf.Apply = applyCh
 	// 维持状态的协程
 	go rf.maintainStateLoop()
 	// initialize from state persisted before a crash
@@ -434,19 +526,57 @@ func (rf *Raft) maintainStateLoop() {
 // leader
 // step1 : send heartbeat to peers
 func (rf *Raft) maintainsLeader() {
-	//log.Printf("[raft-%v %v %v] 发送心跳RPC. now = %v", rf.me, rf.getRole(), rf.Term, time.Now().Local())
-	args := AppendEntriesArgs{Peer: rf.me, Term: rf.Term}
 	for idx := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
 		go func(from int, to int, term int32) {
+			// args
+			rf.mu.Lock()
+			currMaxIdx := len(rf.Log) - 1
+			args := AppendEntriesArgs{Peer: rf.me, Term: rf.Term}
+			args.PrevLogIndex = rf.NextIndex[to] - 1
+			args.LeaderCommitted = rf.CommittedIndex
+			if args.PrevLogIndex < 0 || args.PrevLogIndex > currMaxIdx {
+				args.PrevLogTerm = -1
+			} else {
+				args.PrevLogTerm = rf.Log[args.PrevLogIndex].Term
+			}
+			if args.PrevLogIndex < currMaxIdx {
+				args.Entries = rf.Log[rf.NextIndex[to]:len(rf.Log)]
+			}
+			rf.mu.Unlock()
+
+			// send rpc
 			reply := AppendEntriesReply{}
 			flag := rf.sendAppendEntries(to, &args, &reply)
+
+			// process rpc reply
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			if !rf.killed() && rf.isLeader() && flag && reply.Term > rf.Term && args.Term == rf.Term {
+			if rf.killed() || !rf.isLeader() || args.Term != rf.Term || !flag {
+				return
+			}
+			DPrintf("[raft-%v %v %v] 心跳RPC响应: term = %v, result = %v \n", rf.me, rf.getRole(), rf.Term, reply.Term, reply.Result)
+			if reply.Term > rf.Term {
 				rf.changeToFollower(reply.Term)
+			} else if reply.Result {
+				rf.NextIndex[to] = currMaxIdx + 1
+				rf.MatchIndex[to] = currMaxIdx
+				if args.Entries == nil {
+					return
+				}
+				for idx := args.PrevLogIndex + 1; idx <= currMaxIdx; idx++ {
+					rf.Log[idx].Copies++
+					//DPrintf("[raft-%v %v %v] log[%v].copies = %v \n", rf.me, rf.getRole(), rf.Term, idx, rf.Log[idx].Copies)
+				}
+				if currMaxIdx > rf.CommittedIndex && rf.isQuorum(rf.Log[currMaxIdx].Copies) {
+					DPrintf("[raft-%v %v %v] update commitIdx from %v to %v \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex, currMaxIdx)
+					rf.CommittedIndex = currMaxIdx
+					rf.applyMsg()
+				}
+			} else {
+				rf.NextIndex[to]--
 			}
 		}(rf.me, idx, rf.Term)
 	}
@@ -456,7 +586,7 @@ func (rf *Raft) maintainsLeader() {
 
 func (rf *Raft) maintainsFollower() {
 	if rf.heartbeatTimeout() {
-		log.Printf("[raft-%v %v %v] 心跳超时. now = %v", rf.me, rf.getRole(), rf.Term, time.Now().Local())
+		DPrintf("[raft-%v %v %v] 心跳超时. now = %v", rf.me, rf.getRole(), rf.Term, time.Now().Local())
 		rf.changeToCandidate()
 		rf.mu.Unlock()
 	} else {
@@ -474,7 +604,7 @@ func (rf *Raft) maintainsCandidate() {
 	}
 
 	// 发送投票RPC
-	log.Printf("[raft-%v %v %v] == 发起投票RPC == \n", rf.me, rf.getRole(), rf.Term)
+	DPrintf("[raft-%v %v %v] == 发起投票RPC == \n", rf.me, rf.getRole(), rf.Term)
 	rf.VotedFor = rf.me
 	rf.Term += 1
 	maxTerm, sumVotes := rf.Term, len(rf.peers)
@@ -513,17 +643,28 @@ VotedDone:
 	defer rf.mu.Unlock()
 	if rf.killed() || !rf.isCandidate() {
 	} else if maxTerm > rf.Term {
-		log.Printf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
+		DPrintf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
 		rf.changeToFollower(maxTerm)
 	} else if rf.isQuorum(acceptVotes) {
-		log.Printf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
+		DPrintf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
 		rf.changeToLeader()
 	} else {
-		log.Printf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
+		DPrintf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes)
 		rf.updateHeartbeatTime()
 	}
 }
 
 func (rf *Raft) isQuorum(accept int) bool {
 	return accept > len(rf.peers)/2
+}
+
+func (rf *Raft) applyMsg() {
+	if rf.CommittedIndex > rf.LastAppliedIndex {
+		for idx := rf.LastAppliedIndex + 1; idx <= rf.CommittedIndex; idx++ {
+			msg := ApplyMsg{Command: rf.Log[idx].Command, CommandValid: true, CommandIndex: idx + 1}
+			DPrintf("[raft-%v %v %v] 应用log到状态机, msg = {idx : %v, command : %v} \n", rf.me, rf.getRole(), rf.Term, msg.CommandIndex, msg.Command)
+			rf.Apply <- msg
+			rf.LastAppliedIndex++
+		}
+	}
 }
