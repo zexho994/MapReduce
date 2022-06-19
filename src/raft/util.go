@@ -13,6 +13,6 @@ func DPrintf(format string, a ...interface{}) {
 
 func TestPrintf(part, format string, a ...interface{}) {
 	if Debug > 0 {
-		log.Printf("[Test-"+part+"]"+format, a...)
+		log.Printf("[Test-"+part+"]***"+format+"***", a...)
 	}
 }
