@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"bytes"
 	"log"
 	"math/rand"
 	"sync"
@@ -25,6 +26,7 @@ import (
 )
 import "sync/atomic"
 import "../labrpc"
+import "../labgob"
 
 // import "bytes"
 // import "../labgob"
@@ -98,10 +100,12 @@ type LogEntry struct {
 	Copies int
 }
 
-func (rf *Raft) appendLog(nlog []LogEntry) {
-	for _, i := range nlog {
-		rf.Log = append(rf.Log, i)
+func (rf *Raft) appendLog(offset int, nlog []LogEntry) {
+	for _, loge := range nlog {
+		//DPrintf("[raft-%v %v %v] 追加日志, idx = %v, log = %v \n", rf.me, rf.getRole(), rf.Term, idx+offset, loge)
+		rf.Log = append(rf.Log, loge)
 	}
+	rf.persist()
 }
 
 func (rf *Raft) printLog() {
@@ -151,7 +155,7 @@ func (rf *Raft) changeToCandidate() {
 
 // 变成follower,重置投票情况
 func (rf *Raft) changeToFollower(term int32) {
-	DPrintf("[raft-%v %v %v] 修改状态 => Follow. biggerTerm = %v \n", rf.me, rf.getRole(), rf.Term, term)
+	//DPrintf("[raft-%v %v %v] 修改状态 => Follow. biggerTerm = %v \n", rf.me, rf.getRole(), rf.Term, term)
 	rf.Role = Follower
 	rf.Term = term
 	rf.VotedFor = -1
@@ -196,14 +200,15 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
-	// Your Code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	//DPrintf("[raft-%v %v %v] 准备数据持久化 \n", rf.me, rf.getRole(), rf.Term)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.Term)
+	e.Encode(rf.LastAppliedIndex)
+	e.Encode(rf.CommittedIndex)
+	e.Encode(rf.Log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -213,19 +218,28 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your Code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+
+	DPrintf("[raft-%v %v %v] == 读取持久化数据 == \n", rf.me, rf.getRole(), rf.Term)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var term int32
+	var logs []LogEntry
+	var appIdx, commitIdx int
+	if d.Decode(&term) != nil ||
+		d.Decode(&appIdx) != nil ||
+		d.Decode(&commitIdx) != nil ||
+		d.Decode(&logs) != nil {
+		log.Fatalln("read persist fail")
+		return
+	}
+	rf.Term = term
+	rf.LastAppliedIndex = appIdx
+	rf.CommittedIndex = commitIdx
+	rf.Log = logs
+	DPrintf("[raft-%v %v %v] term = %v. \n", rf.me, rf.getRole(), rf.Term, rf.Term)
+	DPrintf("[raft-%v %v %v] lastAppliedIndex = %v. \n", rf.me, rf.getRole(), rf.Term, rf.LastAppliedIndex)
+	DPrintf("[raft-%v %v %v] committedIndex = %v. \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex)
+	DPrintf("[raft-%v %v %v] logs.len = %v. \n", rf.me, rf.getRole(), rf.Term, len(rf.Log))
 }
 
 //
@@ -325,22 +339,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	logLen := 0
-	if args.Entries != nil {
-		logLen = len(args.Entries)
-	}
-	DPrintf("[raft-%v %v %v] 收到Leader心跳RPC. id = %v. term = %v. commit = %v. preIdx = %v. preTerm = %v. logLen = %v \n",
-		rf.me, rf.getRole(), rf.Term, args.Peer, args.Term, args.LeaderCommitted, args.PrevLogIndex, args.PrevLogTerm, logLen)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.Term, reply.Result = rf.Term, false
 	if args.Term < rf.Term {
 		return
-	} else if rf.isCandidate() {
-		rf.changeToFollower(args.Term)
 	} else {
-		rf.updateHeartbeatTime()
+		rf.changeToFollower(args.Term)
 	}
 
 	if args.PrevLogIndex >= len(rf.Log) || (args.PrevLogIndex >= 0 && rf.Log[args.PrevLogIndex].Term != args.PrevLogTerm) {
@@ -350,30 +355,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Entries != nil {
 		// 新的日志数据覆盖到 []log 中
-		oldLen := len(rf.Log)
 		if args.PrevLogIndex < len(rf.Log) {
 			rf.Log = rf.Log[:args.PrevLogIndex+1]
 		}
-		rf.appendLog(args.Entries)
-		DPrintf("[raft-%v %v %v] 保存新日志, len from %v to %v. \n", rf.me, rf.getRole(), rf.Term, oldLen, len(rf.Log))
+		rf.appendLog(args.PrevLogIndex+1, args.Entries)
 	}
 
 	// 更新提交位置
 	ci := rf.CommittedIndex
 	if rf.CommittedIndex < args.LeaderCommitted {
-		rf.CommittedIndex = min(args.LeaderCommitted, len(rf.Log)-1)
-		DPrintf("[raft-%v %v %v] 更新日志提交索引, from %v to %v \n", rf.me, rf.getRole(), rf.Term, ci, rf.CommittedIndex)
+		rf.updateCommitIndex(min(args.LeaderCommitted, len(rf.Log)-1))
+		DPrintf("[raft-%v %v %v] 更新日志CommitIdx, from %v to %v \n", rf.me, rf.getRole(), rf.Term, ci, rf.CommittedIndex)
 		rf.applyMsg()
 	}
 	// 日志操作lab-2A不实现
 	rf.persist()
 }
 
-func max(n1, n2 int) int {
-	if n1 > n2 {
-		return n1
-	}
-	return n2
+func (rf *Raft) updateCommitIndex(idx int) {
+	rf.CommittedIndex = idx
+	rf.persist()
+}
+
+func (rf *Raft) incAppliedIndex() {
+	rf.LastAppliedIndex += 1
+	rf.persist()
 }
 
 func maxInt32(n1, n2 int32) int32 {
@@ -574,7 +580,6 @@ func (rf *Raft) maintainsLeader() {
 			if rf.killed() || !rf.isLeader() || args.Term != rf.Term || !flag {
 				return
 			}
-			DPrintf("[raft-%v %v %v] 心跳RPC响应: term = %v, result = %v \n", rf.me, rf.getRole(), rf.Term, reply.Term, reply.Result)
 			if reply.Term > rf.Term {
 				rf.changeToFollower(reply.Term)
 			} else if reply.Result {
@@ -585,15 +590,20 @@ func (rf *Raft) maintainsLeader() {
 				}
 				for idx := args.PrevLogIndex + 1; idx <= currMaxIdx; idx++ {
 					rf.Log[idx].Copies++
-					//DPrintf("[raft-%v %v %v] log[%v].copies = %v \n", rf.me, rf.getRole(), rf.Term, idx, rf.Log[idx].Copies)
 				}
 				if currMaxIdx > rf.CommittedIndex && rf.isQuorum(rf.Log[currMaxIdx].Copies) {
-					DPrintf("[raft-%v %v %v] update commitIdx from %v to %v \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex, currMaxIdx)
-					rf.CommittedIndex = currMaxIdx
+					DPrintf("[raft-%v %v %v] 更新 commitIdx from %v to %v \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex, currMaxIdx)
+					rf.updateCommitIndex(currMaxIdx)
 					rf.applyMsg()
 				}
 			} else {
-				rf.NextIndex[to]--
+				// 找到前一个term的日志
+				t := args.PrevLogTerm
+				i := args.PrevLogIndex
+				for i > 0 && rf.Log[i].Term == t {
+					i--
+				}
+				rf.NextIndex[to] = i
 			}
 		}(rf.me, idx, rf.Term)
 	}
@@ -621,11 +631,12 @@ func (rf *Raft) maintainsCandidate() {
 	}
 
 	// 发送投票RPC
-	DPrintf("[raft-%v %v %v] == 发起投票RPC == \n", rf.me, rf.getRole(), rf.Term)
 	rf.VotedFor = rf.me
 	rf.Term += 1
+	DPrintf("[raft-%v %v %v] == 发起投票RPC == \n", rf.me, rf.getRole(), rf.Term)
 	maxTerm, sumVotes := rf.Term, len(rf.peers)
-	voteReply := make(chan *RequestVoteReply)
+	validVoteReply := make(chan *RequestVoteReply)
+	invalidVoteReply := make(chan *RequestVoteReply)
 	args := RequestVoteArgs{Peer: rf.me, Term: rf.Term, LastLogTerm: rf.maxLogTerm(), LastLogIndex: rf.maxLogIdx()}
 	for idx := range rf.peers {
 		if rf.me == idx {
@@ -633,27 +644,35 @@ func (rf *Raft) maintainsCandidate() {
 		}
 		go func(from int, to int, term int32) {
 			reply := RequestVoteReply{Peer: to, Term: term, VoteGranted: false}
-			_ = rf.sendRequestVote(to, &args, &reply)
-			//DPrintf("[raft-%v %v %v] response of vote => term = %v. granted = %v. \n", rf.me, rf.getRole(), rf.Term, reply.Term, reply.VoteGranted)
-			voteReply <- &reply
+			ok := rf.sendRequestVote(to, &args, &reply)
+			if ok {
+				validVoteReply <- &reply
+			} else {
+				invalidVoteReply <- &reply
+			}
+
 		}(rf.me, idx, rf.Term)
 	}
 	rf.mu.Unlock()
 
 	// 处理投票回复
-	validVotes, acceptVotes, rejectVotes, halfNumber := 1, 1, 0, sumVotes/2
+	voteReplyCount, acceptVotes, rejectVotes, halfNumber := 1, 1, 0, sumVotes/2
 	for {
 		select {
-		case reply := <-voteReply:
-			validVotes++
+		case reply := <-validVoteReply:
+			voteReplyCount++
 			if reply.VoteGranted {
 				acceptVotes++
 			} else {
-				rejectVotes++
 				maxTerm = maxInt32(reply.Term, maxTerm)
+				rejectVotes++
 			}
-			//DPrintf("[raft-%v %v %v] response of vote => term = %v. granted = %v. isDone ? %v \n", rf.me, rf.getRole(), rf.Term, reply.Term, reply.VoteGranted, validVotes == sumVotes)
-			if validVotes == sumVotes || acceptVotes > halfNumber || rejectVotes > halfNumber {
+			if voteReplyCount == sumVotes || acceptVotes > halfNumber || rejectVotes > 0 {
+				goto VotedDone
+			}
+		case <-invalidVoteReply:
+			voteReplyCount++
+			if voteReplyCount == sumVotes {
 				goto VotedDone
 			}
 		}
@@ -664,14 +683,14 @@ VotedDone:
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.killed() || !rf.isCandidate() {
-	} else if maxTerm > rf.Term {
-		DPrintf("[raft-%v-%v-%v] 投票结果: 有更大的Term,放弃竞选: %v.\n", rf.me, rf.getRole(), rf.Term, maxTerm)
+	} else if maxTerm > rf.Term || rejectVotes > 0 {
+		DPrintf("[raft-%v-%v-%v] 放弃竞选.\n", rf.me, rf.getRole(), rf.Term)
 		rf.changeToFollower(maxTerm)
 	} else if rf.isQuorum(acceptVotes) {
-		DPrintf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v. 有效票数 = %v. == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes, validVotes)
+		DPrintf("[raft-%v-%v-%v] == 投票通过: 总票数 = %v. 赞同票数 = %v. 有效票数 = %v. == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes, voteReplyCount)
 		rf.changeToLeader()
 	} else {
-		DPrintf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v. 有效票数 = %v. == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes, validVotes)
+		DPrintf("[raft-%v-%v-%v] == 投票未通过: 总票数 = %v. 赞同票数 = %v. 有效票数 = %v. == \n", rf.me, rf.getRole(), rf.Term, sumVotes, acceptVotes, voteReplyCount)
 		rf.updateHeartbeatTime()
 	}
 }
@@ -684,10 +703,10 @@ func (rf *Raft) applyMsg() {
 	if rf.CommittedIndex > rf.LastAppliedIndex {
 		for idx := rf.LastAppliedIndex + 1; idx <= rf.CommittedIndex; idx++ {
 			msg := ApplyMsg{Command: rf.Log[idx].Command, CommandValid: true, CommandIndex: idx + 1}
-			DPrintf("[raft-%v %v %v] 应用log到状态机, msg = {idx : %v, command : %v} \n", rf.me, rf.getRole(), rf.Term, msg.CommandIndex, msg.Command)
+			//DPrintf("[raft-%v %v %v] 应用log到状态机, msg = {idx : %v, command : %v} \n", rf.me, rf.getRole(), rf.Term, msg.CommandIndex, msg.Command)
 			rf.Apply <- msg
-			rf.LastAppliedIndex++
 		}
+		rf.incAppliedIndex()
 	}
 }
 
