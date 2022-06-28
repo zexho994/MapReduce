@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"log"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 )
@@ -84,6 +85,7 @@ type Raft struct {
 	//对于每⼀个服务器，需要发送给他的下⼀个⽇志条⽬的索引值（初始化为领导⼈最后索引值加⼀）
 	NextIndex []int
 	//对于每⼀个服务器，已经复制给他的⽇志的最⾼索引值
+	MatchIndex []int
 
 	Apply chan ApplyMsg
 }
@@ -95,8 +97,6 @@ type LogEntry struct {
 	Term int32
 	// 数据实体
 	Command interface{}
-
-	Copies int
 }
 
 func (rf *Raft) appendLog(offset int, nlog []LogEntry) {
@@ -130,10 +130,12 @@ func (rf *Raft) updateVoteTime() {
 func (rf *Raft) changeToLeader() {
 	DPrintf("[raft-%v %v %v] 修改状态 => Leader .\n", rf.me, rf.getRole(), rf.Term)
 	rf.Role = Leader
-	for i := range rf.NextIndex {
+	rf.NextIndex = make([]int, len(rf.peers))
+	rf.MatchIndex = make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		rf.MatchIndex[i] = -1
 		rf.NextIndex[i] = len(rf.Log)
 	}
-	//rf.MatchIndex = make([]int, len(rf.peers))
 }
 
 func (rf *Raft) changeToCandidate() {
@@ -471,7 +473,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if isLeader {
 		index, term = len(rf.Log)+1, int(rf.Term)
 		//DPrintf("[raft-%v %v %v] 客户端请求，cmd = %v \n", rf.me, rf.getRole(), rf.Term, command)
-		rf.Log = append(rf.Log, LogEntry{Index: index, Term: rf.Term, Command: command, Copies: 1})
+		rf.Log = append(rf.Log, LogEntry{Index: index, Term: rf.Term, Command: command})
 	}
 	return index, term, isLeader
 }
@@ -587,27 +589,26 @@ func (rf *Raft) maintainsLeader() {
 				return
 			}
 
-			DPrintf("[raft-%v %v %v] heartbeat reply = %v \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex, reply)
+			DPrintf("[raft-%v %v %v] heartbeat reply = %v \n", rf.me, rf.getRole(), rf.Term, reply)
 
 			if reply.Term > rf.Term {
 				rf.changeToFollower(reply.Term)
 			} else if reply.Result {
 				rf.NextIndex[to] = currMaxIdx + 1
+				rf.MatchIndex[to] = currMaxIdx
 				if args.Entries == nil {
 					return
 				}
-				for idx := args.PrevLogIndex + 1; idx <= currMaxIdx; idx++ {
-					rf.Log[idx].Copies++
+				// 找到过半的最大日志idx
+				arr := make([]int, len(rf.peers))
+				for idx, n := range rf.MatchIndex {
+					arr[idx] = n
 				}
-				for i := currMaxIdx; i > rf.CommittedIndex && rf.Log[i].Term >= rf.Term; i-- {
-					if rf.isQuorum(rf.Log[i].Copies) {
-						DPrintf("[raft-%v %v %v] 更新 commitIdx from %v to %v \n", rf.me, rf.getRole(), rf.Term, rf.CommittedIndex, i)
-						rf.updateCommitIndex(i)
-						rf.applyMsg()
-						break
-					}
+				sort.Ints(arr)
+				if idx := arr[len(arr)/2]; idx > rf.CommittedIndex {
+					rf.CommittedIndex = idx
 				}
-			} else {
+			} else if len(rf.Log) > 0 {
 				// 找到前一个term的日志
 				i := args.PrevLogIndex
 				for i > 0 && rf.Log[i].Term == args.PrevLogTerm {
@@ -735,5 +736,5 @@ func (rf *Raft) maxLogIdx() int {
 	if lastLog == nil {
 		return -1
 	}
-	return lastLog.Index
+	return lastLog.Index - 1
 }
